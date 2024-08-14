@@ -319,7 +319,8 @@ def on_cold_shutdown(worker):
              sys.__stdout__)
     install_worker_term_hard_handler(worker, sig='SIGINT', callback=during_cold_shutdown)
     install_worker_term_hard_handler(worker, sig='SIGQUIT', callback=during_cold_shutdown)
-    install_worker_term_hard_handler(worker, sig='SIGTERM', callback=during_cold_shutdown)  # For REMAP_SIGTERM
+    if REMAP_SIGTERM == "SIGQUIT":
+        install_worker_term_hard_handler(worker, sig='SIGTERM', callback=during_cold_shutdown)
     worker.consumer.wait_for_warm_shutdown()
     worker.consumer.cancel_long_running_tasks_on_cold_shutdown()
 
