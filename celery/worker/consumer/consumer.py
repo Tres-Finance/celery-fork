@@ -157,6 +157,26 @@ class Consumer:
     #: connection attempt.
     first_connection_attempt = True
 
+    def cancel_long_running_tasks_on_cold_shutdown(self):
+        if self.app.conf.worker_cancel_long_running_tasks_on_cold_shutdown:
+            all_requests = list(requests.values())
+            # all_requests = tuple(active_requests)
+            if all_requests:
+                warn('Canceling all unacked requests')
+                for request in all_requests:
+                    if request.task.acks_late and not request.acknowledged:
+                        warn("Canceling request: %s", request)
+                        request.cancel(self.pool)
+
+    def wait_for_warm_shutdown(self, wait_once=True, wait_requests=True):
+        wait = self.app.conf.worker_warm_shutdown_wait and self.app.conf.worker_warm_shutdown_wait > 0
+        if wait and self._wait_for_warm_shutdown and (requests if wait_requests else True):
+            warn(f'Waiting for warm shutdown to complete: {self.app.conf.worker_warm_shutdown_wait} seconds')
+            sleep(self.app.conf.worker_warm_shutdown_wait)
+
+        if wait_once:
+            self._wait_for_warm_shutdown = False
+
     class Blueprint(bootsteps.Blueprint):
         """Consumer blueprint."""
 
@@ -204,6 +224,7 @@ class Consumer:
         self.initial_prefetch_count = initial_prefetch_count
         self.prefetch_multiplier = prefetch_multiplier
         self._maximum_prefetch_restored = True
+        self._wait_for_warm_shutdown = True
 
         # this contains a tokenbucket for each task type by name, used for
         # rate limits, or None if rate limits are disabled for that task.
@@ -458,6 +479,7 @@ class Consumer:
             if request_id in requests:
                 del requests[request_id]
         reserved_requests.clear()
+
         if self.pool and self.pool.flush:
             self.pool.flush()
 
