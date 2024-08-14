@@ -302,6 +302,8 @@ NAMESPACES = Namespace(
         cancel_long_running_tasks_on_connection_loss=Option(
             False, type='bool'
         ),
+        cancel_long_running_tasks_on_cold_shutdown=Option(True, type='bool'),
+        warm_shutdown_wait=Option(10.0, type='float'),
         concurrency=Option(None, type='int'),
         consumer=Option('celery.worker.consumer:Consumer', type='string'),
         direct=Option(False, type='bool', old={'celery_worker_direct'}),

@@ -279,14 +279,15 @@ class Worker(WorkController):
 
 
 def _shutdown_handler(worker, sig='TERM', how='Warm',
-                      callback=None, exitcode=EX_OK):
+                      callback=None, exitcode=EX_OK, verbose=True):
     def _handle_request(*args):
         with in_sighandler():
             from celery.worker import state
             if current_process()._name == 'MainProcess':
                 if callback:
                     callback(worker)
-                safe_say(f'worker: {how} shutdown (MainProcess)')
+                if verbose:
+                    safe_say(f'worker: {how} shutdown (MainProcess)')
                 signals.worker_shutting_down.send(
                     sender=worker.hostname, sig=sig, how=how,
                     exitcode=exitcode,
@@ -297,18 +298,45 @@ def _shutdown_handler(worker, sig='TERM', how='Warm',
     platforms.signals[sig] = _handle_request
 
 
+def terminate_cold_shutdown(worker):
+    # safe_say('In terminate_cold_shutdown()', sys.__stdout__)
+    from celery.exceptions import WorkerTerminate
+    raise WorkerTerminate(EX_FAILURE)
+
+
+def during_cold_shutdown(worker):
+    # safe_say('In during_cold_shutdown()', sys.__stdout__)
+    install_worker_term_hard_handler(worker, sig='SIGINT', callback=terminate_cold_shutdown, verbose=False)
+    install_worker_term_hard_handler(worker, sig='SIGQUIT', callback=terminate_cold_shutdown)
+    worker.consumer.cancel_long_running_tasks_on_cold_shutdown()
+    # Waiting for on_cold_shutdown() to complete
+    safe_say('Waiting for cold shutdown to complete...')
+
+# ADD COMMENTS
+def on_cold_shutdown(worker):
+    # safe_say('In on_cold_shutdown()', sys.__stdout__)
+    safe_say('worker: Hitting Ctrl+C again will terminate all running tasks!')
+    install_worker_term_hard_handler(worker, sig='SIGINT', callback=during_cold_shutdown)
+    install_worker_term_hard_handler(worker, sig='SIGQUIT', callback=during_cold_shutdown)
+    install_worker_term_hard_handler(worker, sig='SIGTERM', callback=during_cold_shutdown)  # For REMAP_SIGTERM
+    worker.consumer.wait_for_warm_shutdown()
+    worker.consumer.cancel_long_running_tasks_on_cold_shutdown()
+
+
 if REMAP_SIGTERM == "SIGQUIT":
     install_worker_term_handler = partial(
-        _shutdown_handler, sig='SIGTERM', how='Cold', exitcode=EX_FAILURE,
+        _shutdown_handler, sig='SIGTERM', how='Cold', callback=on_cold_shutdown,
+        exitcode=EX_FAILURE,
     )
 else:
     install_worker_term_handler = partial(
         _shutdown_handler, sig='SIGTERM', how='Warm',
     )
 
+
 if not is_jython:  # pragma: no cover
     install_worker_term_hard_handler = partial(
-        _shutdown_handler, sig='SIGQUIT', how='Cold',
+        _shutdown_handler, sig='SIGQUIT', how='Cold', callback=on_cold_shutdown,
         exitcode=EX_FAILURE,
     )
 else:  # pragma: no cover
@@ -317,8 +345,8 @@ else:  # pragma: no cover
 
 
 def on_SIGINT(worker):
-    safe_say('worker: Hitting Ctrl+C again will terminate all running tasks!')
-    install_worker_term_hard_handler(worker, sig='SIGINT')
+    safe_say('worker: Hitting Ctrl+C again will initiate cold shutdown, terminating all tasks!')
+    install_worker_term_hard_handler(worker, sig='SIGINT', verbose=False)
 
 
 if not is_jython:  # pragma: no cover
